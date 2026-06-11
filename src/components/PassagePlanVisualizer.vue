@@ -4,14 +4,17 @@
       <div>
         <h1>Passage Plan Visualizer</h1>
         <p>
-          Paste backend route payload to visualize routePorts and routeSequences.
+          Paste backend route-map response to visualize routePorts, routeSequences,
+          routeLegs solid/dotted split, and vessel marker position.
         </p>
       </div>
 
       <div class="summary-pills">
         <span>{{ validRoutePortCount }} valid port(s)</span>
         <span>{{ totalValidPointCount }} valid point(s)</span>
-        <span>{{ routeSegments.length }} segment(s)</span>
+        <span>{{ routeSegments.length }} raw segment(s)</span>
+        <span>{{ routeLegs.length }} route leg(s)</span>
+        <span v-if="vesselMarker">Vessel: {{ vesselMarker.status || '-' }}</span>
       </div>
     </section>
 
@@ -20,7 +23,8 @@
         <div>
           <h2>JSON Payload</h2>
           <p>
-            Paste payload with routePorts and nested routeSequences.
+            Paste full API response or only the data object. Latest response with
+            routeLegs and vesselMarker is supported.
           </p>
         </div>
 
@@ -59,23 +63,31 @@
         <div>
           <h2>Map Preview</h2>
           <p>
-            Route segments are rendered from valid coordinates only.
-            Invalid/null coordinates are skipped.
+            If routeLegs exist, the map uses solid/dotted rendering from routeLegs.
+            Otherwise, it falls back to raw routeSequences.
           </p>
         </div>
 
         <div class="legend">
           <span>
-            <i class="legend-line route-line"></i>
-            routeSequences
+            <i class="legend-line raw-line"></i>
+            raw route
+          </span>
+          <span>
+            <i class="legend-line solid-line"></i>
+            solid traveled
+          </span>
+          <span>
+            <i class="legend-line dotted-line"></i>
+            dotted upcoming
           </span>
           <span>
             <i class="legend-dot port-dot"></i>
-            routePorts
+            ports
           </span>
           <span>
-            <i class="legend-dot waypoint-dot"></i>
-            waypoints
+            <i class="legend-dot vessel-dot"></i>
+            vessel
           </span>
         </div>
       </div>
@@ -101,6 +113,84 @@
           </ol-vector-layer>
         </ol-map>
       </div>
+    </section>
+
+    <section v-if="vesselMarker || routeLegs.length > 0" class="progress-grid">
+      <section class="card vessel-card">
+        <h2>Vessel Marker</h2>
+
+        <div v-if="!vesselMarker" class="empty-state">
+          No vesselMarker loaded.
+        </div>
+
+        <div v-else class="info-grid">
+          <div>
+            <span>Vessel</span>
+            <strong>{{ vesselMarker.vesselCode || '-' }}</strong>
+          </div>
+          <div>
+            <span>Voyage</span>
+            <strong>{{ vesselMarker.voyage || '-' }}</strong>
+          </div>
+          <div>
+            <span>Status</span>
+            <strong>{{ vesselMarker.status || '-' }}</strong>
+          </div>
+          <div>
+            <span>Calculation</span>
+            <strong>{{ vesselMarker.calculationMethod || '-' }}</strong>
+          </div>
+          <div>
+            <span>Current leg</span>
+            <strong>
+              {{ vesselMarker.currentLegIndex ?? '-' }}
+              <template v-if="vesselMarker.currentLegFrom || vesselMarker.currentLegTo">
+                ({{ vesselMarker.currentLegFrom || '-' }} → {{ vesselMarker.currentLegTo || '-' }})
+              </template>
+            </strong>
+          </div>
+          <div>
+            <span>Progress</span>
+            <strong>{{ formatPercent(vesselMarker.progressPercentage) }}</strong>
+          </div>
+          <div>
+            <span>Latitude</span>
+            <strong>{{ formatNullable(vesselMarker.latitude) }}</strong>
+          </div>
+          <div>
+            <span>Longitude</span>
+            <strong>{{ formatNullable(vesselMarker.longitude) }}</strong>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Route Legs</h2>
+
+        <div v-if="routeLegs.length === 0" class="empty-state">
+          No routeLegs loaded.
+        </div>
+
+        <div v-else class="leg-list">
+          <div
+            v-for="leg in routeLegs"
+            :key="leg.id"
+            class="leg-item"
+            :class="leg.renderStatus.toLowerCase()"
+          >
+            <div>
+              <strong>Leg {{ leg.legIndex }}</strong>
+              <span>{{ leg.fromPortCode || '-' }} → {{ leg.toPortCode || '-' }}</span>
+            </div>
+            <span class="status-badge" :class="leg.renderStatus.toLowerCase()">
+              {{ leg.renderStatus }}
+            </span>
+            <span>{{ formatPercent(leg.progressPercentage) }}</span>
+            <span>Solid: {{ leg.solidSegment.validPoints.length }}</span>
+            <span>Dotted: {{ leg.dottedSegment.validPoints.length }}</span>
+          </div>
+        </div>
+      </section>
     </section>
 
     <section class="bottom-grid">
@@ -258,9 +348,41 @@ type RawRoutePoint = {
   distance?: NumericPayloadValue;
 };
 
+type RawRouteLeg = {
+  legIndex?: number | string | null;
+  fromPortCode?: string | null;
+  toPortCode?: string | null;
+  progressPercentage?: NumericPayloadValue;
+  renderStatus?: string | null;
+  solidSequences?: unknown;
+  dottedSequences?: unknown;
+};
+
+type RawVesselMarker = {
+  vesselCode?: string | null;
+  voyage?: string | null;
+  currentLegIndex?: number | string | null;
+  currentLegFrom?: string | null;
+  currentLegTo?: string | null;
+  distanceTraveled?: NumericPayloadValue;
+  remainingDistance?: NumericPayloadValue;
+  totalDistance?: NumericPayloadValue;
+  targetDistance?: NumericPayloadValue;
+  targetDistancePercentage?: NumericPayloadValue;
+  progressPercentage?: NumericPayloadValue;
+  latitude?: NumericPayloadValue;
+  longitude?: NumericPayloadValue;
+  calculationMethod?: string | null;
+  source?: string | null;
+  status?: string | null;
+  statusMessage?: string | null;
+};
+
 type RawRoutePayload = {
   routePorts?: unknown;
   routeSequences?: unknown;
+  routeLegs?: unknown;
+  vesselMarker?: unknown;
   data?: unknown;
 };
 
@@ -281,12 +403,47 @@ type NormalizedPoint = {
   label: string;
 };
 
+type RouteSegmentKind = 'raw' | 'solid' | 'dotted';
+
 type RouteSegment = {
   id: string;
   index: number;
+  kind: RouteSegmentKind;
   points: NormalizedPoint[];
   validPoints: NormalizedPoint[];
   coordinates: [number, number][];
+};
+
+type NormalizedRouteLeg = {
+  id: string;
+  legIndex: number;
+  fromPortCode: string | null;
+  toPortCode: string | null;
+  progressPercentage: number | null;
+  renderStatus: string;
+  solidSegment: RouteSegment;
+  dottedSegment: RouteSegment;
+};
+
+type NormalizedVesselMarker = {
+  vesselCode: string | null;
+  voyage: string | null;
+  currentLegIndex: number | null;
+  currentLegFrom: string | null;
+  currentLegTo: string | null;
+  distanceTraveled: number | null;
+  remainingDistance: number | null;
+  totalDistance: number | null;
+  targetDistance: number | null;
+  targetDistancePercentage: number | null;
+  progressPercentage: number | null;
+  latitude: number | null;
+  longitude: number | null;
+  calculationMethod: string | null;
+  source: string | null;
+  status: string | null;
+  statusMessage: string | null;
+  isValid: boolean;
 };
 
 const projection = ref('EPSG:4326');
@@ -298,6 +455,8 @@ const parseError = ref('');
 
 const routePorts = ref<NormalizedPoint[]>([]);
 const routeSegments = ref<RouteSegment[]>([]);
+const routeLegs = ref<NormalizedRouteLeg[]>([]);
+const vesselMarker = ref<NormalizedVesselMarker | null>(null);
 
 const validRoutePorts = computed(() => {
   return routePorts.value.filter((point) => point.isValid);
@@ -311,6 +470,20 @@ const validRouteSequencePoints = computed(() => {
   return routeSegments.value.flatMap((segment) => segment.validPoints);
 });
 
+const routeLegRenderSegments = computed(() => {
+  return routeLegs.value.flatMap((leg) => [leg.solidSegment, leg.dottedSegment]);
+});
+
+const activeRenderSegments = computed(() => {
+  const validRouteLegSegments = routeLegRenderSegments.value.filter(
+    (segment) => segment.coordinates.length > 1,
+  );
+
+  return validRouteLegSegments.length > 0
+    ? validRouteLegSegments
+    : routeSegments.value;
+});
+
 const totalValidPointCount = computed(() => {
   return routeSegments.value.reduce((total, segment) => {
     return total + segment.validPoints.length;
@@ -320,7 +493,7 @@ const totalValidPointCount = computed(() => {
 const mapFeatures = computed(() => {
   const features: Feature<Geometry>[] = [];
 
-  routeSegments.value.forEach((segment) => {
+  activeRenderSegments.value.forEach((segment) => {
     if (segment.coordinates.length <= 1) {
       return;
     }
@@ -329,7 +502,7 @@ const mapFeatures = computed(() => {
       geometry: new LineString(segment.coordinates),
     });
 
-    feature.setStyle(routeLineStyle);
+    feature.setStyle(resolveSegmentStyle(segment.kind));
     features.push(feature);
   });
 
@@ -342,14 +515,26 @@ const mapFeatures = computed(() => {
     features.push(feature);
   });
 
-  validRouteSequencePoints.value.forEach((point) => {
+  if (vesselMarker.value?.isValid) {
+    const marker = vesselMarker.value;
     const feature = new Feature({
-      geometry: new Point([point.longitude as number, point.latitude as number]),
+      geometry: new Point([marker.longitude as number, marker.latitude as number]),
     });
 
-    feature.setStyle(createWaypointStyle(point.routeSequenceLabel ?? ''));
+    feature.setStyle(createVesselMarkerStyle('VESSEL'));
     features.push(feature);
-  });
+  }
+
+  if (routeLegs.value.length === 0) {
+    validRouteSequencePoints.value.forEach((point) => {
+      const feature = new Feature({
+        geometry: new Point([point.longitude as number, point.latitude as number]),
+      });
+
+      feature.setStyle(createWaypointStyle(point.routeSequenceLabel ?? ''));
+      features.push(feature);
+    });
+  }
 
   return features;
 });
@@ -363,6 +548,8 @@ const parsePayload = () => {
   parseError.value = '';
   routePorts.value = [];
   routeSegments.value = [];
+  routeLegs.value = [];
+  vesselMarker.value = null;
 
   if (!payloadText.value.trim()) {
     parseError.value = 'Please paste JSON payload first.';
@@ -380,28 +567,25 @@ const parsePayload = () => {
       ? payload.routeSequences
       : [];
 
+    const rawRouteLegs = Array.isArray(payload.routeLegs)
+      ? payload.routeLegs
+      : [];
+
     routePorts.value = rawRoutePorts.map((point: RawRoutePoint, index: number) => {
-      return normalizePoint(point, null, index);
+      return normalizePoint(point, null, index, 'port');
     });
 
     routeSegments.value = rawRouteSequences.map((segment: RawRoutePoint[], index: number) => {
-      const points = Array.isArray(segment)
-        ? segment.map((point, pointIndex) => normalizePoint(point, index, pointIndex))
-        : [];
-
-      const validPoints = points.filter((point) => point.isValid);
-
-      return {
-        id: `segment-${index}`,
-        index,
-        points,
-        validPoints,
-        coordinates: validPoints.map((point) => [
-          point.longitude as number,
-          point.latitude as number,
-        ]),
-      };
+      return buildRouteSegment(segment, index, 'raw', `segment-${index}`);
     });
+
+    routeLegs.value = rawRouteLegs.map((leg: RawRouteLeg, index: number) => {
+      return normalizeRouteLeg(leg, index);
+    });
+
+    vesselMarker.value = isRecord(payload.vesselMarker)
+      ? normalizeVesselMarker(payload.vesselMarker as RawVesselMarker)
+      : null;
 
     updateMapCenter();
   } catch (error) {
@@ -425,7 +609,10 @@ const resolveRoutePayload = (payload: unknown): RawRoutePayload => {
 const hasRouteCollections = (value: unknown): value is RawRoutePayload => {
   return (
     isRecord(value) &&
-    (Array.isArray(value.routePorts) || Array.isArray(value.routeSequences))
+    (Array.isArray(value.routePorts) ||
+      Array.isArray(value.routeSequences) ||
+      Array.isArray(value.routeLegs) ||
+      isRecord(value.vesselMarker))
   );
 };
 
@@ -433,10 +620,102 @@ const isRecord = (value: unknown): value is Record<string, unknown> => {
   return typeof value === 'object' && value !== null;
 };
 
+const normalizeRouteLeg = (
+  rawLeg: RawRouteLeg,
+  fallbackIndex: number,
+): NormalizedRouteLeg => {
+  const legIndex = toNumber(rawLeg.legIndex) ?? fallbackIndex;
+  const solidSequences = Array.isArray(rawLeg.solidSequences)
+    ? rawLeg.solidSequences
+    : [];
+  const dottedSequences = Array.isArray(rawLeg.dottedSequences)
+    ? rawLeg.dottedSequences
+    : [];
+
+  return {
+    id: `leg-${legIndex}-${fallbackIndex}`,
+    legIndex,
+    fromPortCode: rawLeg.fromPortCode ?? null,
+    toPortCode: rawLeg.toPortCode ?? null,
+    progressPercentage: readPayloadNumber(rawLeg.progressPercentage),
+    renderStatus: rawLeg.renderStatus ?? 'UNKNOWN',
+    solidSegment: buildRouteSegment(
+      solidSequences as RawRoutePoint[],
+      legIndex,
+      'solid',
+      `leg-${legIndex}-solid`,
+    ),
+    dottedSegment: buildRouteSegment(
+      dottedSequences as RawRoutePoint[],
+      legIndex,
+      'dotted',
+      `leg-${legIndex}-dotted`,
+    ),
+  };
+};
+
+const normalizeVesselMarker = (
+  rawMarker: RawVesselMarker,
+): NormalizedVesselMarker => {
+  const latitude = readPayloadNumber(rawMarker.latitude);
+  const longitude = readPayloadNumber(rawMarker.longitude);
+  const isValid =
+    typeof latitude === 'number' &&
+    typeof longitude === 'number' &&
+    Number.isFinite(latitude) &&
+    Number.isFinite(longitude);
+
+  return {
+    vesselCode: rawMarker.vesselCode ?? null,
+    voyage: rawMarker.voyage ?? null,
+    currentLegIndex: toNumber(rawMarker.currentLegIndex),
+    currentLegFrom: rawMarker.currentLegFrom ?? null,
+    currentLegTo: rawMarker.currentLegTo ?? null,
+    distanceTraveled: readPayloadNumber(rawMarker.distanceTraveled),
+    remainingDistance: readPayloadNumber(rawMarker.remainingDistance),
+    totalDistance: readPayloadNumber(rawMarker.totalDistance),
+    targetDistance: readPayloadNumber(rawMarker.targetDistance),
+    targetDistancePercentage: readPayloadNumber(rawMarker.targetDistancePercentage),
+    progressPercentage: readPayloadNumber(rawMarker.progressPercentage),
+    latitude,
+    longitude,
+    calculationMethod: rawMarker.calculationMethod ?? null,
+    source: rawMarker.source ?? null,
+    status: rawMarker.status ?? null,
+    statusMessage: rawMarker.statusMessage ?? null,
+    isValid,
+  };
+};
+
+const buildRouteSegment = (
+  rawPoints: RawRoutePoint[],
+  index: number,
+  kind: RouteSegmentKind,
+  id: string,
+): RouteSegment => {
+  const points = Array.isArray(rawPoints)
+    ? rawPoints.map((point, pointIndex) => normalizePoint(point, index, pointIndex, kind))
+    : [];
+  const validPoints = points.filter((point) => point.isValid);
+
+  return {
+    id,
+    index,
+    kind,
+    points,
+    validPoints,
+    coordinates: validPoints.map((point) => [
+      point.longitude as number,
+      point.latitude as number,
+    ]),
+  };
+};
+
 const normalizePoint = (
   rawPoint: RawRoutePoint,
   segmentIndex: number | null,
   fallbackIndex: number,
+  kind: string,
 ): NormalizedPoint => {
   const sequence = toNumber(rawPoint.sequence) ?? fallbackIndex;
   const latitude = readPayloadNumber(rawPoint.latitude);
@@ -453,7 +732,7 @@ const normalizePoint = (
   const portCode = rawPoint.portCode ?? null;
 
   return {
-    id: `${segmentIndex ?? 'port'}-${fallbackIndex}-${sequence}-${portCode ?? rawPoint.point ?? ''}`,
+    id: `${kind}-${segmentIndex ?? 'port'}-${fallbackIndex}-${sequence}-${portCode ?? rawPoint.point ?? ''}`,
     segmentIndex,
     sequence,
     routeSequenceLabel:
@@ -507,6 +786,10 @@ const buildPointLabel = (
     return `${pointType}-${portCode}`;
   }
 
+  if (pointType === 'VESSEL_MARKER') {
+    return 'VESSEL';
+  }
+
   if (pointType) {
     return pointType;
   }
@@ -514,13 +797,40 @@ const buildPointLabel = (
   return `${sequence}`;
 };
 
-const routeLineStyle = new Style({
+const rawRouteLineStyle = new Style({
   stroke: new Stroke({
     color: '#2563eb',
     width: 4,
     lineDash: [10, 10],
   }),
 });
+
+const solidRouteLineStyle = new Style({
+  stroke: new Stroke({
+    color: '#16a34a',
+    width: 5,
+  }),
+});
+
+const dottedRouteLineStyle = new Style({
+  stroke: new Stroke({
+    color: '#f97316',
+    width: 5,
+    lineDash: [10, 12],
+  }),
+});
+
+const resolveSegmentStyle = (kind: RouteSegmentKind) => {
+  if (kind === 'solid') {
+    return solidRouteLineStyle;
+  }
+
+  if (kind === 'dotted') {
+    return dottedRouteLineStyle;
+  }
+
+  return rawRouteLineStyle;
+};
 
 const createPortPointStyle = (label: string) => {
   return new Style({
@@ -556,11 +866,46 @@ const createWaypointStyle = (label: string) => {
   });
 };
 
+const createVesselMarkerStyle = (label: string) => {
+  return new Style({
+    image: new CircleStyle({
+      radius: 14,
+      fill: new Fill({ color: '#7c3aed' }),
+      stroke: new Stroke({ color: '#ffffff', width: 3 }),
+    }),
+    text: new Text({
+      text: label,
+      font: 'bold 13px sans-serif',
+      fill: new Fill({ color: '#ffffff' }),
+      offsetY: -30,
+      stroke: new Stroke({ color: '#312e81', width: 5 }),
+    }),
+  });
+};
+
 const updateMapCenter = () => {
+  const markerPoints = vesselMarker.value?.isValid
+    ? [
+        {
+          latitude: vesselMarker.value.latitude,
+          longitude: vesselMarker.value.longitude,
+        },
+      ]
+    : [];
+
   const allValidPoints = [
     ...validRoutePorts.value,
     ...routeSegments.value.flatMap((segment) => segment.validPoints),
-  ];
+    ...routeLegRenderSegments.value.flatMap((segment) => segment.validPoints),
+    ...markerPoints,
+  ].filter((point) => {
+    return (
+      typeof point.latitude === 'number' &&
+      typeof point.longitude === 'number' &&
+      Number.isFinite(point.latitude) &&
+      Number.isFinite(point.longitude)
+    );
+  });
 
   if (allValidPoints.length === 0) {
     mapCenter.value = [112.5, -6.3];
@@ -586,80 +931,253 @@ const formatNullable = (value: number | null) => {
     : '-';
 };
 
+const formatPercent = (value: number | null) => {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? `${value.toFixed(2)}%`
+    : '-';
+};
+
 const samplePayload = {
-  routePorts: [
-    {
-      sequence: 0,
-      pointType: 'POL',
-      portCode: 'IDSUB',
-      latitude: -7.22195,
-      longitude: 112.73213,
-    },
-    {
-      sequence: 1,
-      pointType: 'POT',
-      portCode: 'IDJKT',
-      latitude: -6.1667,
-      longitude: 106.871483,
-    },
-    {
-      sequence: 2,
-      pointType: 'POD',
-      portCode: 'IDTBR',
-      latitude: null,
-      longitude: null,
-    },
-  ],
-  routeSequences: [
-    [
+  message: null,
+  status: 0,
+  data: {
+    routePorts: [
       {
         sequence: 0,
-        source: 'PORT_LOCATION',
         pointType: 'POL',
-        point: null,
-        portCode: 'IDSUB',
-        latitude: -7.22195,
-        longitude: 112.73213,
-        heading: null,
-        distance: null,
-      },
-      {
-        sequence: 1,
-        source: 'PASSAGE_PLAN_DETAIL',
-        pointType: 'WAYPOINT',
-        point: 'POINT 1',
-        portCode: null,
-        latitude: {
-          source: '-6.869444000000000',
-          parsedValue: -6.869444,
-        },
-        longitude: {
-          source: '112.753333000000000',
-          parsedValue: 112.753333,
-        },
-        heading: {
-          source: '0.000000',
-          parsedValue: 0,
-        },
-        distance: {
-          source: '0.000000',
-          parsedValue: 0,
-        },
-      },
-      {
-        sequence: 8,
-        source: 'PORT_LOCATION',
-        pointType: 'POD',
-        point: null,
         portCode: 'IDJKT',
         latitude: -6.1667,
         longitude: 106.871483,
-        heading: null,
-        distance: null,
+      },
+      {
+        sequence: 1,
+        pointType: 'POT',
+        portCode: 'IDSUB',
+        latitude: -7.22195,
+        longitude: 112.73213,
+      },
+      {
+        sequence: 2,
+        pointType: 'POD',
+        portCode: 'IDMAK',
+        latitude: -5.1239219407559,
+        longitude: 119.407976926018,
       },
     ],
-    [],
-  ],
+    routeSequences: [
+      [
+        {
+          sequence: 0,
+          source: 'PORT_LOCATION',
+          pointType: 'POL',
+          point: null,
+          portCode: 'IDJKT',
+          latitude: -6.1667,
+          longitude: 106.871483,
+          heading: null,
+          distance: null,
+        },
+        {
+          sequence: 1,
+          source: 'PASSAGE_PLAN_DETAIL',
+          pointType: 'WAYPOINT',
+          point: 'POINT 1',
+          portCode: null,
+          latitude: -6.026834383084784,
+          longitude: 106.88072789377323,
+          heading: 20.686352,
+          distance: 0,
+        },
+        {
+          sequence: 7,
+          source: 'PORT_LOCATION',
+          pointType: 'POD',
+          point: null,
+          portCode: 'IDSUB',
+          latitude: -7.22195,
+          longitude: 112.73213,
+          heading: null,
+          distance: null,
+        },
+      ],
+      [
+        {
+          sequence: 0,
+          source: 'PORT_LOCATION',
+          pointType: 'POL',
+          point: null,
+          portCode: 'IDSUB',
+          latitude: -7.22195,
+          longitude: 112.73213,
+          heading: null,
+          distance: null,
+        },
+        {
+          sequence: 4,
+          source: 'PASSAGE_PLAN_DETAIL',
+          pointType: 'WAYPOINT',
+          point: 'POINT-4',
+          portCode: null,
+          latitude: -6.033333,
+          longitude: 116.666667,
+          heading: 0,
+          distance: 0,
+        },
+        {
+          sequence: 5,
+          source: 'PASSAGE_PLAN_DETAIL',
+          pointType: 'WAYPOINT',
+          point: 'POINT-5',
+          portCode: null,
+          latitude: -5.366667,
+          longitude: 118.422222,
+          heading: 0,
+          distance: 0,
+        },
+        {
+          sequence: 8,
+          source: 'PORT_LOCATION',
+          pointType: 'POD',
+          point: null,
+          portCode: 'IDMAK',
+          latitude: -5.1239219407559,
+          longitude: 119.407976926018,
+          heading: null,
+          distance: null,
+        },
+      ],
+    ],
+    routeLegs: [
+      {
+        legIndex: 0,
+        fromPortCode: 'IDJKT',
+        toPortCode: 'IDSUB',
+        progressPercentage: 100,
+        renderStatus: 'COMPLETED',
+        solidSequences: [
+          {
+            sequence: 0,
+            source: 'PORT_LOCATION',
+            pointType: 'POL',
+            point: null,
+            portCode: 'IDJKT',
+            latitude: -6.1667,
+            longitude: 106.871483,
+            heading: null,
+            distance: null,
+          },
+          {
+            sequence: 7,
+            source: 'PORT_LOCATION',
+            pointType: 'POD',
+            point: null,
+            portCode: 'IDSUB',
+            latitude: -7.22195,
+            longitude: 112.73213,
+            heading: null,
+            distance: null,
+          },
+        ],
+        dottedSequences: [],
+      },
+      {
+        legIndex: 1,
+        fromPortCode: 'IDSUB',
+        toPortCode: 'IDMAK',
+        progressPercentage: 64.5613035492806,
+        renderStatus: 'ACTIVE',
+        solidSequences: [
+          {
+            sequence: 0,
+            source: 'PORT_LOCATION',
+            pointType: 'POL',
+            point: null,
+            portCode: 'IDSUB',
+            latitude: -7.22195,
+            longitude: 112.73213,
+            heading: null,
+            distance: null,
+          },
+          {
+            sequence: 4,
+            source: 'PASSAGE_PLAN_DETAIL',
+            pointType: 'WAYPOINT',
+            point: 'POINT-4',
+            portCode: null,
+            latitude: -6.033333,
+            longitude: 116.666667,
+            heading: 0,
+            distance: 0,
+          },
+          {
+            sequence: 5,
+            source: 'VESSEL_MARKER',
+            pointType: 'VESSEL_MARKER',
+            point: 'VESSEL_MARKER',
+            portCode: null,
+            latitude: -5.912843334124183,
+            longitude: 116.9839566703546,
+            heading: null,
+            distance: null,
+          },
+        ],
+        dottedSequences: [
+          {
+            sequence: 5,
+            source: 'VESSEL_MARKER',
+            pointType: 'VESSEL_MARKER',
+            point: 'VESSEL_MARKER',
+            portCode: null,
+            latitude: -5.912843334124183,
+            longitude: 116.9839566703546,
+            heading: null,
+            distance: null,
+          },
+          {
+            sequence: 5,
+            source: 'PASSAGE_PLAN_DETAIL',
+            pointType: 'WAYPOINT',
+            point: 'POINT-5',
+            portCode: null,
+            latitude: -5.366667,
+            longitude: 118.422222,
+            heading: 0,
+            distance: 0,
+          },
+          {
+            sequence: 8,
+            source: 'PORT_LOCATION',
+            pointType: 'POD',
+            point: null,
+            portCode: 'IDMAK',
+            latitude: -5.1239219407559,
+            longitude: 119.407976926018,
+            heading: null,
+            distance: null,
+          },
+        ],
+      },
+    ],
+    vesselMarker: {
+      vesselCode: 'DUMMY',
+      voyage: 'PT215N',
+      currentLegIndex: 1,
+      currentLegFrom: 'IDSUB',
+      currentLegTo: 'IDMAK',
+      distanceTraveled: 471.297515909748,
+      remainingDistance: 258.702484090252,
+      totalDistance: 730,
+      targetDistance: 258.702484090252,
+      targetDistancePercentage: 35.4386964507194,
+      progressPercentage: 64.5613035492806,
+      latitude: -5.912843334124183,
+      longitude: 116.9839566703546,
+      calculationMethod: 'DIRECT_INTERPOLATION',
+      source: 'MELISA_GET_DISTANCE_VESSEL',
+      status: 'DIRECT_INTERPOLATION_CALCULATED',
+      statusMessage: null,
+    },
+  },
 };
 </script>
 
@@ -845,8 +1363,19 @@ button {
   display: inline-block;
   width: 28px;
   height: 0;
-  border-top: 3px dashed #2563eb;
   vertical-align: middle;
+}
+
+.raw-line {
+  border-top: 3px dashed #2563eb;
+}
+
+.solid-line {
+  border-top: 4px solid #16a34a;
+}
+
+.dotted-line {
+  border-top: 4px dashed #f97316;
 }
 
 .legend-dot {
@@ -861,18 +1390,81 @@ button {
   background: #dc2626;
 }
 
-.waypoint-dot {
-  background: #1d4ed8;
+.vessel-dot {
+  background: #7c3aed;
 }
 
+.progress-grid,
 .bottom-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
   gap: 20px;
 }
 
+.progress-grid {
+  margin-bottom: 20px;
+}
+
 .card {
   padding: 20px;
+}
+
+.info-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.info-grid div {
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  background: #f8fafc;
+  padding: 12px;
+}
+
+.info-grid span {
+  display: block;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.info-grid strong {
+  display: block;
+  margin-top: 4px;
+  color: #0f172a;
+  font-size: 13px;
+  word-break: break-word;
+}
+
+.leg-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.leg-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto auto;
+  gap: 10px;
+  align-items: center;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  background: #f8fafc;
+  padding: 12px;
+  color: #475569;
+  font-size: 13px;
+}
+
+.leg-item strong,
+.leg-item span {
+  display: block;
+}
+
+.leg-item strong {
+  color: #0f172a;
 }
 
 .empty-state {
@@ -929,7 +1521,8 @@ tr.invalid {
   font-weight: 800;
 }
 
-.status-badge.valid {
+.status-badge.valid,
+.status-badge.completed {
   background: #dcfce7;
   color: #166534;
 }
@@ -937,6 +1530,16 @@ tr.invalid {
 .status-badge.invalid {
   background: #fee2e2;
   color: #991b1b;
+}
+
+.status-badge.active {
+  background: #ede9fe;
+  color: #5b21b6;
+}
+
+.status-badge.upcoming {
+  background: #ffedd5;
+  color: #9a3412;
 }
 
 .segment-list {
@@ -1029,6 +1632,7 @@ tr.invalid {
 }
 
 @media (max-width: 1180px) {
+  .progress-grid,
   .bottom-grid {
     grid-template-columns: 1fr;
   }
@@ -1047,6 +1651,11 @@ tr.invalid {
 
   .map-wrapper {
     height: 480px;
+  }
+
+  .info-grid,
+  .leg-item {
+    grid-template-columns: 1fr;
   }
 
   .sequence-item {
