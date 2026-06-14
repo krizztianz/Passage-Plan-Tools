@@ -89,6 +89,14 @@
             <i class="legend-dot vessel-dot"></i>
             vessel
           </span>
+          <span v-if="shouldShowPathNodesLegend">
+            <i class="legend-dot waypoint-dot"></i>
+            {{ shouldRenderSectionNodeIndicators ? 'section nodes' : 'path nodes' }}
+          </span>
+          <span v-if="shouldRenderSectionNodeIndicators">
+            <i class="legend-dot selected-node-dot"></i>
+            selected node
+          </span>
         </div>
       </div>
 
@@ -112,6 +120,10 @@
             <ol-source-vector :features="mapFeatures" />
           </ol-vector-layer>
         </ol-map>
+      </div>
+
+      <div v-if="methodASectionNodeWarning" class="warning-box">
+        {{ methodASectionNodeWarning }}
       </div>
     </section>
 
@@ -358,6 +370,20 @@ type RawRouteLeg = {
   dottedSequences?: unknown;
 };
 
+type RawSectionNode = {
+  legIndex?: number | string | null;
+  sectionIndex?: number | string | null;
+  sectionCount?: number | string | null;
+  label?: string | null;
+  latitude?: NumericPayloadValue;
+  longitude?: NumericPayloadValue;
+  markerProgressPercentage?: NumericPayloadValue;
+  isSelected?: boolean | string | number | null;
+  source?: string | null;
+  routeSequence?: number | string | null;
+  point?: string | null;
+};
+
 type RawVesselMarker = {
   vesselCode?: string | null;
   voyage?: string | null;
@@ -370,6 +396,11 @@ type RawVesselMarker = {
   targetDistance?: NumericPayloadValue;
   targetDistancePercentage?: NumericPayloadValue;
   progressPercentage?: NumericPayloadValue;
+  markerProgressPercentage?: NumericPayloadValue;
+  sectionIndex?: number | string | null;
+  sectionCount?: number | string | null;
+  nodePoint?: number | string | null;
+  sectionNodes?: unknown;
   latitude?: NumericPayloadValue;
   longitude?: NumericPayloadValue;
   calculationMethod?: string | null;
@@ -425,6 +456,22 @@ type NormalizedRouteLeg = {
   dottedSegment: RouteSegment;
 };
 
+type NormalizedSectionNode = {
+  id: string;
+  legIndex: number | null;
+  sectionIndex: number;
+  sectionCount: number | null;
+  label: string;
+  latitude: number | null;
+  longitude: number | null;
+  markerProgressPercentage: number | null;
+  isSelected: boolean;
+  source: string | null;
+  routeSequence: number | null;
+  point: string | null;
+  isValid: boolean;
+};
+
 type NormalizedVesselMarker = {
   vesselCode: string | null;
   voyage: string | null;
@@ -437,6 +484,11 @@ type NormalizedVesselMarker = {
   targetDistance: number | null;
   targetDistancePercentage: number | null;
   progressPercentage: number | null;
+  markerProgressPercentage: number | null;
+  sectionIndex: number | null;
+  sectionCount: number | null;
+  nodePoint: number | null;
+  sectionNodes: NormalizedSectionNode[];
   latitude: number | null;
   longitude: number | null;
   calculationMethod: string | null;
@@ -472,6 +524,39 @@ const validRouteSequencePoints = computed(() => {
 
 const routeLegRenderSegments = computed(() => {
   return routeLegs.value.flatMap((leg) => [leg.solidSegment, leg.dottedSegment]);
+});
+
+const isMethodAVisualization = computed(() => {
+  const calculationMethod = vesselMarker.value?.calculationMethod;
+
+  return (
+    calculationMethod === 'SECTION_SNAP_NODE' ||
+    calculationMethod === 'SECTION_SNAP_SEQUENCE'
+  );
+});
+
+const methodASectionNodes = computed(() => {
+  return vesselMarker.value?.sectionNodes.filter((node) => node.isValid) ?? [];
+});
+
+const shouldRenderSectionNodeIndicators = computed(() => {
+  return isMethodAVisualization.value && methodASectionNodes.value.length > 0;
+});
+
+const shouldRenderPathIndicators = computed(() => {
+  return routeLegs.value.length === 0;
+});
+
+const shouldShowPathNodesLegend = computed(() => {
+  return shouldRenderPathIndicators.value || shouldRenderSectionNodeIndicators.value;
+});
+
+const methodASectionNodeWarning = computed(() => {
+  if (!isMethodAVisualization.value || methodASectionNodes.value.length > 0) {
+    return '';
+  }
+
+  return 'Method A response detected, but vesselMarker.sectionNodes is missing or empty. Use the latest backend true-snap response to show Method A node indicators.';
 });
 
 const activeRenderSegments = computed(() => {
@@ -515,17 +600,7 @@ const mapFeatures = computed(() => {
     features.push(feature);
   });
 
-  if (vesselMarker.value?.isValid) {
-    const marker = vesselMarker.value;
-    const feature = new Feature({
-      geometry: new Point([marker.longitude as number, marker.latitude as number]),
-    });
-
-    feature.setStyle(createVesselMarkerStyle('VESSEL'));
-    features.push(feature);
-  }
-
-  if (routeLegs.value.length === 0) {
+  if (shouldRenderPathIndicators.value) {
     validRouteSequencePoints.value.forEach((point) => {
       const feature = new Feature({
         geometry: new Point([point.longitude as number, point.latitude as number]),
@@ -534,6 +609,27 @@ const mapFeatures = computed(() => {
       feature.setStyle(createWaypointStyle(point.routeSequenceLabel ?? ''));
       features.push(feature);
     });
+  }
+
+  if (shouldRenderSectionNodeIndicators.value) {
+    methodASectionNodes.value.forEach((node) => {
+      const feature = new Feature({
+        geometry: new Point([node.longitude as number, node.latitude as number]),
+      });
+
+      feature.setStyle(createSectionNodeStyle(node.label, node.isSelected));
+      features.push(feature);
+    });
+  }
+
+  if (vesselMarker.value?.isValid) {
+    const marker = vesselMarker.value;
+    const feature = new Feature({
+      geometry: new Point([marker.longitude as number, marker.latitude as number]),
+    });
+
+    feature.setStyle(createVesselMarkerStyle('VESSEL'));
+    features.push(feature);
   }
 
   return features;
@@ -659,6 +755,9 @@ const normalizeVesselMarker = (
 ): NormalizedVesselMarker => {
   const latitude = readPayloadNumber(rawMarker.latitude);
   const longitude = readPayloadNumber(rawMarker.longitude);
+  const rawSectionNodes = Array.isArray(rawMarker.sectionNodes)
+    ? (rawMarker.sectionNodes as RawSectionNode[])
+    : [];
   const isValid =
     typeof latitude === 'number' &&
     typeof longitude === 'number' &&
@@ -677,12 +776,54 @@ const normalizeVesselMarker = (
     targetDistance: readPayloadNumber(rawMarker.targetDistance),
     targetDistancePercentage: readPayloadNumber(rawMarker.targetDistancePercentage),
     progressPercentage: readPayloadNumber(rawMarker.progressPercentage),
+    markerProgressPercentage: readPayloadNumber(rawMarker.markerProgressPercentage),
+    sectionIndex: toNumber(rawMarker.sectionIndex),
+    sectionCount: toNumber(rawMarker.sectionCount),
+    nodePoint: toNumber(rawMarker.nodePoint),
+    sectionNodes: rawSectionNodes.map((node, index) => normalizeSectionNode(node, index)),
     latitude,
     longitude,
     calculationMethod: rawMarker.calculationMethod ?? null,
     source: rawMarker.source ?? null,
     status: rawMarker.status ?? null,
     statusMessage: rawMarker.statusMessage ?? null,
+    isValid,
+  };
+};
+
+const normalizeSectionNode = (
+  rawNode: RawSectionNode,
+  fallbackIndex: number,
+): NormalizedSectionNode => {
+  const legIndex = toNumber(rawNode.legIndex);
+  const sectionIndex = toNumber(rawNode.sectionIndex) ?? fallbackIndex + 1;
+  const sectionCount = toNumber(rawNode.sectionCount);
+  const latitude = readPayloadNumber(rawNode.latitude);
+  const longitude = readPayloadNumber(rawNode.longitude);
+  const routeSequence = toNumber(rawNode.routeSequence);
+  const markerProgressPercentage = readPayloadNumber(rawNode.markerProgressPercentage);
+  const isValid =
+    typeof latitude === 'number' &&
+    typeof longitude === 'number' &&
+    Number.isFinite(latitude) &&
+    Number.isFinite(longitude);
+  const label =
+    rawNode.label ??
+    `${typeof legIndex === 'number' ? legIndex + 1 : 1}-${sectionIndex}`;
+
+  return {
+    id: `section-node-${legIndex ?? 'x'}-${sectionIndex}-${fallbackIndex}`,
+    legIndex,
+    sectionIndex,
+    sectionCount,
+    label,
+    latitude,
+    longitude,
+    markerProgressPercentage,
+    isSelected: readBoolean(rawNode.isSelected),
+    source: rawNode.source ?? null,
+    routeSequence,
+    point: rawNode.point ?? null,
     isValid,
   };
 };
@@ -748,6 +889,22 @@ const normalizePoint = (
     isValid,
     label: buildPointLabel(pointType, portCode, sequence),
   };
+};
+
+const readBoolean = (value: unknown): boolean => {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+
+  if (typeof value === 'number') {
+    return value !== 0;
+  }
+
+  if (typeof value === 'string') {
+    return ['true', '1', 'yes', 'y'].includes(value.trim().toLowerCase());
+  }
+
+  return false;
 };
 
 const readPayloadNumber = (value: NumericPayloadValue): number | null => {
@@ -866,6 +1023,26 @@ const createWaypointStyle = (label: string) => {
   });
 };
 
+const createSectionNodeStyle = (label: string, isSelected: boolean) => {
+  return new Style({
+    image: new CircleStyle({
+      radius: isSelected ? 10 : 7,
+      fill: new Fill({ color: isSelected ? '#f59e0b' : '#1d4ed8' }),
+      stroke: new Stroke({
+        color: isSelected ? '#1e3a8a' : '#ffffff',
+        width: isSelected ? 3 : 2,
+      }),
+    }),
+    text: new Text({
+      text: label,
+      font: isSelected ? 'bold 14px sans-serif' : 'bold 12px sans-serif',
+      fill: new Fill({ color: '#0f172a' }),
+      offsetY: isSelected ? 26 : 22,
+      stroke: new Stroke({ color: '#ffffff', width: 5 }),
+    }),
+  });
+};
+
 const createVesselMarkerStyle = (label: string) => {
   return new Style({
     image: new CircleStyle({
@@ -897,6 +1074,7 @@ const updateMapCenter = () => {
     ...validRoutePorts.value,
     ...routeSegments.value.flatMap((segment) => segment.validPoints),
     ...routeLegRenderSegments.value.flatMap((segment) => segment.validPoints),
+    ...methodASectionNodes.value,
     ...markerPoints,
   ].filter((point) => {
     return (
@@ -1392,6 +1570,26 @@ button {
 
 .vessel-dot {
   background: #7c3aed;
+}
+
+.waypoint-dot {
+  background: #1d4ed8;
+}
+
+.selected-node-dot {
+  background: #f59e0b;
+  box-shadow: inset 0 0 0 2px #1e3a8a;
+}
+
+.warning-box {
+  margin: 12px 20px 18px;
+  border: 1px solid #fed7aa;
+  border-radius: 14px;
+  background: #fff7ed;
+  padding: 12px 14px;
+  color: #9a3412;
+  font-size: 14px;
+  font-weight: 700;
 }
 
 .progress-grid,
